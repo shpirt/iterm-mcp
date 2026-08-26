@@ -1,5 +1,10 @@
 node_modules/
 build/
+dist/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
 *.log
 .env*
 tmp

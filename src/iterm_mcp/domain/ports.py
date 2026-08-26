@@ -1,0 +1,36 @@
+"""Ports consumed by the application layer."""
+
+from collections.abc import Awaitable
+from typing import Protocol
+
+from .models import SessionTarget
+
+
+class TerminalPort(Protocol):
+    """The iTerm2 capabilities required by terminal tools."""
+
+    async def connect(self) -> None: ...
+
+    async def close(self) -> None: ...
+
+    async def resolve_active_session(self) -> SessionTarget: ...
+
+    async def resolve_session(self, session_id: str) -> SessionTarget | None: ...
+
+    async def send_text(self, target: SessionTarget, text: str) -> None: ...
+
+    async def execute_command(self, target: SessionTarget, text: str) -> None: ...
+
+    async def read_contents(self, target: SessionTarget, lines: int = 25) -> str: ...
+
+    async def read_line_count(self, target: SessionTarget) -> int: ...
+
+    async def send_control(self, target: SessionTarget, code: int) -> None: ...
+
+    async def wait_for_completion(self, target: SessionTarget) -> None: ...
+
+
+class TerminalPortFactory(Protocol):
+    """Factory type useful for tests and future lifecycle management."""
+
+    def __call__(self) -> Awaitable[TerminalPort]: ...

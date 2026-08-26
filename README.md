@@ -1,5 +1,5 @@
-# iterm-mcp 
-A Model Context Protocol server that provides access to your iTerm session.
+# iterm-mcp
+A Model Context Protocol server that provides access to your iTerm2 session through the iTerm2 Python API.
 
 ![Main Image](.github/images/demo.gif)
 
@@ -11,7 +11,7 @@ A Model Context Protocol server that provides access to your iTerm session.
 
 **Full Terminal Control and REPL support:** The model can start and interact with REPL's as well as send control characters like ctrl-c, ctrl-z, etc.
 
-**Easy on the Dependencies:** iterm-mcp is built with minimal dependencies and is runnable via npx. It's designed to be easy to add to Claude Desktop and other MCP clients. It should just work.
+**Easy on the Dependencies:** iterm-mcp uses a small Python runtime managed by uv and is designed to be easy to add to Claude Desktop and other MCP clients.
 
 
 ## Safety Considerations
@@ -28,8 +28,10 @@ A Model Context Protocol server that provides access to your iTerm session.
 
 ### Requirements
 
-* iTerm2 must be running
-* Node version 18 or greater
+* macOS and iTerm2 must be running
+* Python 3.11 or greater
+* iTerm2 Python API must be enabled in iTerm2 settings
+* The first external Python API connection may require macOS Automation permission
 
 
 ## Installation
@@ -43,9 +45,11 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
 {
   "mcpServers": {
     "iterm-mcp": {
-      "command": "npx",
+      "command": "uv",
       "args": [
-        "-y",
+        "run",
+        "--project",
+        "/absolute/path/to/iterm-mcp",
         "iterm-mcp"
       ]
     }
@@ -53,39 +57,37 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
 }
 ```
 
-### Installing via Smithery
-
-To install iTerm for Claude Desktop automatically via [Smithery](https://smithery.ai/server/iterm-mcp):
-
-```bash
-npx -y @smithery/cli install iterm-mcp --client claude
-```
-[![smithery badge](https://smithery.ai/badge/iterm-mcp)](https://smithery.ai/server/iterm-mcp)
-
 ## Development
 
-Install dependencies:
+Install dependencies and create the lock file:
 ```bash
-yarn install
+uv sync
 ```
 
 Build the server:
 ```bash
-yarn run build
+uv run python -m build
 ```
 
-For development with auto-rebuild:
+Run the server over MCP stdio:
 ```bash
-yarn run watch
+uv run iterm-mcp
 ```
 
 ### Debugging
 
-Since MCP servers communicate over stdio, debugging can be challenging. We recommend using the [MCP Inspector](https://github.com/modelcontextprotocol/inspector), which is available as a package script:
+Since MCP servers communicate over stdio, debugging can be challenging. Use the [MCP Inspector](https://github.com/modelcontextprotocol/inspector):
 
 ```bash
-yarn run inspector
-yarn debug <command>
+npx -y @modelcontextprotocol/inspector
 ```
 
-The Inspector will provide a URL to access debugging tools in your browser.
+Point the Inspector at `uv run --project /absolute/path/to/iterm-mcp iterm-mcp`.
+
+Run quality checks:
+
+```bash
+uv run ruff check .
+uv run mypy src
+uv run pytest
+```
