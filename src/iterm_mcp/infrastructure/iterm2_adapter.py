@@ -13,7 +13,12 @@ from iterm2.connection import Connection
 from iterm2.prompt import PromptMonitor
 from iterm2.transaction import Transaction
 
-from iterm_mcp.domain.models import SessionTarget, SessionUnavailableError, TerminalOperationError
+from iterm_mcp.domain.models import (
+    SessionInfo,
+    SessionTarget,
+    SessionUnavailableError,
+    TerminalOperationError,
+)
 
 from .output_reader import normalize_lines
 from .process_tracker import ProcessTracker
@@ -23,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 class Iterm2Adapter:
     """Implements terminal operations against one iTerm2 App connection."""
+
+    _PROXY_SESSION_IDS = frozenset({"active", "all"})
 
     def __init__(
         self,
@@ -112,14 +119,155 @@ class Iterm2Adapter:
     async def resolve_session(self, session_id: str) -> SessionTarget | None:
         try:
             await self.connect()
-            session = self._require_app().get_session_by_id(session_id, include_buried=True)
+            normalized = session_id.strip()
+            if not normalized:
+                return None
+            if normalized.lower() in self._PROXY_SESSION_IDS:
+                raise SessionUnavailableError(
+                    f"iTerm2 session ID is reserved and not a concrete session: {normalized}"
+                )
+            session = self._require_app().get_session_by_id(normalized, include_buried=True)
+            if session is not None and str(session.session_id) != normalized:
+                raise SessionUnavailableError(
+                    f"iTerm2 session ID did not resolve to the requested session: {normalized}"
+                )
             return await self._target_for_session(session) if session else None
-        except TerminalOperationError:
+        except (SessionUnavailableError, TerminalOperationError):
             raise
         except Exception as exc:
             raise TerminalOperationError(
                 f"Failed to resolve iTerm2 session {session_id}: {exc}"
             ) from exc
+
+    @staticmethod
+    def _session_info(
+        session: Any,
+        window: Any,
+        tab: Any,
+        window_index: int,
+        tab_index: int,
+        pane_index: int,
+        current_window_id: str | None,
+        current_tab_id: str | None,
+        current_session_id: str | None,
+        is_buried: bool,
+    ) -> SessionInfo:
+        return SessionInfo(
+            session_id=str(session.session_id),
+            name=str(getattr(session, "name", "")),
+            window_id=str(window.window_id),
+            tab_id=str(tab.tab_id),
+            window_index=window_index,
+            tab_index=tab_index,
+            pane_index=pane_index,
+            is_current_window=str(window.window_id) == current_window_id,
+            is_current_tab=str(tab.tab_id) == current_tab_id,
+            is_current_session=str(session.session_id) == current_session_id,
+            is_buried=is_buried,
+        )
+
+    async def get_active_session(self) -> SessionInfo:
+        try:
+            await self.connect()
+            app = self._require_app()
+            window = app.current_window
+            tab = window.current_tab if window else None
+            session = tab.current_session if tab else None
+            if window is None or tab is None or session is None:
+                raise SessionUnavailableError("No active iTerm2 session is available")
+            window_index = next(
+                (index for index, candidate in enumerate(app.windows)
+                 if candidate.window_id == window.window_id),
+                0,
+            )
+            tab_index = next(
+                (index for index, candidate in enumerate(window.tabs)
+                 if candidate.tab_id == tab.tab_id),
+                0,
+            )
+            pane_index = next(
+                (index for index, candidate in enumerate(tab.sessions)
+                 if candidate.session_id == session.session_id),
+                0,
+            )
+            return self._session_info(
+                session,
+                window,
+                tab,
+                window_index,
+                tab_index,
+                pane_index,
+                str(window.window_id),
+                str(tab.tab_id),
+                str(session.session_id),
+                False,
+            )
+        except (SessionUnavailableError, TerminalOperationError):
+            raise
+        except Exception as exc:
+            raise TerminalOperationError(
+                f"Failed to resolve the active iTerm2 session: {exc}"
+            ) from exc
+
+    async def list_sessions(self, include_buried: bool = False) -> list[SessionInfo]:
+        try:
+            await self.connect()
+            app = self._require_app()
+            current_window = app.current_window
+            current_tab = current_window.current_tab if current_window else None
+            current_session = current_tab.current_session if current_tab else None
+            current_window_id = str(current_window.window_id) if current_window else None
+            current_tab_id = str(current_tab.tab_id) if current_tab else None
+            current_session_id = str(current_session.session_id) if current_session else None
+
+            result: list[SessionInfo] = []
+            seen_session_ids: set[str] = set()
+            for window_index, window in enumerate(app.windows):
+                for tab_index, tab in enumerate(window.tabs):
+                    visible_sessions = {str(session.session_id) for session in tab.sessions}
+                    sessions = tab.all_sessions if include_buried else tab.sessions
+                    for pane_index, session in enumerate(sessions):
+                        session_id = str(session.session_id)
+                        seen_session_ids.add(session_id)
+                        result.append(
+                            self._session_info(
+                                session,
+                                window,
+                                tab,
+                                window_index,
+                                tab_index,
+                                pane_index,
+                                current_window_id,
+                                current_tab_id,
+                                current_session_id,
+                                session_id not in visible_sessions,
+                            )
+                        )
+            if include_buried:
+                for session in getattr(app, "buried_sessions", []):
+                    session_id = str(session.session_id)
+                    if session_id in seen_session_ids:
+                        continue
+                    result.append(
+                        SessionInfo(
+                            session_id=session_id,
+                            name=str(getattr(session, "name", "")),
+                            window_id="",
+                            tab_id="",
+                            window_index=-1,
+                            tab_index=-1,
+                            pane_index=-1,
+                            is_current_window=False,
+                            is_current_tab=False,
+                            is_current_session=False,
+                            is_buried=True,
+                        )
+                    )
+            return result
+        except TerminalOperationError:
+            raise
+        except Exception as exc:
+            raise TerminalOperationError(f"Failed to list iTerm2 sessions: {exc}") from exc
 
     async def _session(self, target: SessionTarget) -> Any:
         await self.connect()

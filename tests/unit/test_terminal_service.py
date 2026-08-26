@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from iterm_mcp.application.terminal_service import TerminalService, tail_lines
-from iterm_mcp.domain.models import SessionTarget
+from iterm_mcp.domain.models import SessionInfo, SessionTarget, SessionUnavailableError
 
 
 @dataclass
@@ -16,6 +16,8 @@ class FakeTerminal:
     resolved: list[str] = field(default_factory=list)
     executed: list[tuple[str, str]] = field(default_factory=list)
     controls: list[tuple[str, int]] = field(default_factory=list)
+    explicit_resolved: list[str] = field(default_factory=list)
+    session_infos: list[SessionInfo] = field(default_factory=list)
 
     async def connect(self) -> None:
         return None
@@ -29,7 +31,17 @@ class FakeTerminal:
         return target
 
     async def resolve_session(self, session_id: str) -> SessionTarget | None:
+        self.explicit_resolved.append(session_id)
         return next((target for target in self.targets if target.session_id == session_id), None)
+
+    async def get_active_session(self) -> SessionInfo:
+        return next(session for session in self.session_infos if session.is_current_session)
+
+    async def list_sessions(self, include_buried: bool = False) -> list[SessionInfo]:
+        return [
+            session for session in self.session_infos
+            if include_buried or not session.is_buried
+        ]
 
     async def send_text(self, target: SessionTarget, text: str) -> None:
         self.executed.append((target.session_id, text))
@@ -102,6 +114,37 @@ async def test_send_control_uses_the_resolved_target() -> None:
     await TerminalService(terminal).send_control(3)
 
     assert terminal.controls == [("session-a", 3)]
+
+
+@pytest.mark.asyncio
+async def test_explicit_session_id_does_not_resolve_active_session() -> None:
+    terminal = FakeTerminal(
+        targets=[SessionTarget("session-a")],
+        buffers=["output"],
+    )
+
+    await TerminalService(terminal).read(1, session_id="session-a")
+
+    assert terminal.resolved == []
+    assert terminal.explicit_resolved == ["session-a"]
+
+
+@pytest.mark.asyncio
+async def test_missing_explicit_session_does_not_fall_back_to_active() -> None:
+    terminal = FakeTerminal(targets=[SessionTarget("active")], buffers=[])
+
+    with pytest.raises(SessionUnavailableError, match="missing"):
+        await TerminalService(terminal).read(1, session_id="missing")
+
+    assert terminal.resolved == []
+
+
+@pytest.mark.asyncio
+async def test_blank_explicit_session_id_is_rejected() -> None:
+    terminal = FakeTerminal(targets=[SessionTarget("active")], buffers=[])
+
+    with pytest.raises(ValueError, match="non-empty"):
+        await TerminalService(terminal).read(1, session_id="  ")
 
 
 def test_tail_lines_handles_empty_and_non_positive_values() -> None:

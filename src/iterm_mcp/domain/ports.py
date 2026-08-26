@@ -3,7 +3,7 @@
 from collections.abc import Awaitable
 from typing import Protocol
 
-from .models import SessionTarget
+from .models import SessionInfo, SessionTarget
 
 
 class TerminalPort(Protocol):
@@ -16,6 +16,10 @@ class TerminalPort(Protocol):
     async def resolve_active_session(self) -> SessionTarget: ...
 
     async def resolve_session(self, session_id: str) -> SessionTarget | None: ...
+
+    async def get_active_session(self) -> SessionInfo: ...
+
+    async def list_sessions(self, include_buried: bool = False) -> list[SessionInfo]: ...
 
     async def send_text(self, target: SessionTarget, text: str) -> None: ...
 

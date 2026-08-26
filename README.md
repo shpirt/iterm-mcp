@@ -22,9 +22,13 @@ A Model Context Protocol server that provides access to your iTerm2 session thro
 * For multi-step tasks, you may need to interrupt the model if it goes off track. Start with smaller, focused tasks until you're familiar with how the model behaves. 
 
 ### Tools
-- `write_to_terminal` - Writes to the active iTerm terminal, often used to run a command. Returns the number of lines of output produced by the command.
-- `read_terminal_output` - Reads the requested number of lines from the active iTerm terminal.
-- `send_control_character` - Sends a control character to the active iTerm terminal.
+- `get_active_session` - Returns metadata and the `session_id` for the current iTerm session.
+- `list_sessions` - Lists available iTerm windows, tabs, and panes so the model can choose a target.
+- `write_to_terminal` - Writes to an iTerm session, optionally selected with `session_id`. Returns the number of lines of output produced by the command.
+- `read_terminal_output` - Reads the requested number of lines from an iTerm session, optionally selected with `session_id`.
+- `send_control_character` - Sends a control character to an iTerm session, optionally selected with `session_id`.
+
+Use `get_active_session` for the current terminal or `list_sessions` when choosing between tabs. Pass the returned `session_id` to subsequent write, read, and control calls to keep operating on the same session after the user changes the active tab. If `session_id` is omitted, the server retains the legacy active-session behavior. Session IDs are runtime identifiers; discover them again after a session is closed or the MCP server restarts.
 
 ### Requirements
 

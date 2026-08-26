@@ -310,6 +310,7 @@ source = { editable = "." }
 dependencies = [
     { name = "iterm2" },
     { name = "mcp" },
+    { name = "typing-extensions" },
 ]
 
 [package.dev-dependencies]
@@ -325,6 +326,7 @@ dev = [
 requires-dist = [
     { name = "iterm2", specifier = ">=2.22,<3" },
     { name = "mcp", specifier = ">=1.29,<2" },
+    { name = "typing-extensions", specifier = ">=4.12,<5" },
 ]
 
 [package.metadata.requires-dev]
