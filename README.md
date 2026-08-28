@@ -31,7 +31,7 @@ A Model Context Protocol server that provides access to your iTerm2 session thro
 - `wait_command` - Waits for one `operation_id` with a bounded wait timeout.
 - `cancel_command` - Requests best-effort Ctrl-C cancellation for an `operation_id`.
 - `read_terminal_output` - Reads the requested number of lines from a specific iTerm session. Pass the `session_id` returned by a previous tool after selecting a session.
-- `send_control_character` - Sends a control character to an iTerm session, optionally selected with `session_id`.
+- `send_control_character` - Sends a control character to the iTerm session identified by the required `session_id`.
 
 Use `get_active_session` for the current terminal or `list_sessions` when choosing between tabs. Pass the returned `session_id` to subsequent write, read, and control calls to keep operating on the same session after the user changes the active tab. For long-running commands, use `start_command` and follow the returned `operation_id`; do not rely on the active tab. Shell Integration should be available in both the local and SSH remote shell for the transparent completion path. If it is unavailable, ordinary returning commands use a unique sentinel fallback. Session IDs are runtime identifiers; discover them again after a session is closed or the MCP server restarts.
 

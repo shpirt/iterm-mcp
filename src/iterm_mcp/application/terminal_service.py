@@ -34,11 +34,10 @@ class TerminalService:
     max_output_chars: int = 1_000_000
     operation_ttl: float = 600.0
 
-    async def _target(self, session_id: str | None = None) -> SessionTarget:
-        # Resolving once is intentional: all operations in this request must use
-        # the same session even if the user changes focus while it is running.
-        if session_id is None:
-            return await self.terminal.resolve_active_session()
+    async def _target(self, session_id: str) -> SessionTarget:
+        # Resolving once pins every request to the caller-selected session.
+        if not isinstance(session_id, str):
+            raise ValueError("session_id must be a non-empty string")
         normalized = session_id.strip()
         if not normalized:
             raise ValueError("session_id must be a non-empty string")
@@ -48,7 +47,7 @@ class TerminalService:
         return target
 
     async def execute(
-        self, command: str, session_id: str | None = None, timeout: float = 120.0
+        self, command: str, session_id: str, timeout: float = 120.0
     ) -> ExecutionResult:
         operation_id = (await self.start(command, session_id, timeout)).operation_id
         snapshot = await self.wait(operation_id, timeout + 1.0)
@@ -63,13 +62,13 @@ class TerminalService:
             output_lines=snapshot.output_lines or len(snapshot.output.splitlines()),
         )
 
-    async def write(self, text: str, session_id: str | None = None) -> WriteResult:
+    async def write(self, text: str, session_id: str) -> WriteResult:
         target = await self._target(session_id)
         await self.terminal.send_text(target, text)
         return WriteResult(session_id=target.session_id)
 
     async def start(
-        self, command: str, session_id: str | None = None, timeout: float = 120.0
+        self, command: str, session_id: str, timeout: float = 120.0
     ) -> OperationSnapshot:
         self._cleanup_operations()
         target = await self._target(session_id)
@@ -233,11 +232,11 @@ class TerminalService:
             await asyncio.gather(*tasks, return_exceptions=True)
         await self.terminal.close()
 
-    async def read(self, lines: int, session_id: str | None = None) -> str:
+    async def read(self, lines: int, session_id: str) -> str:
         target = await self._target(session_id)
         return tail_lines(await self.terminal.read_contents(target, lines), lines)
 
-    async def send_control(self, code: int, session_id: str | None = None) -> None:
+    async def send_control(self, code: int, session_id: str) -> None:
         target = await self._target(session_id)
         await self.terminal.send_control(target, code)
 

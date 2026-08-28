@@ -50,10 +50,8 @@ async def test_server_exposes_expected_tools_and_schema() -> None:
     read_tool = next(tool for tool in tools if tool.name == "read_terminal_output")
     assert read_tool.inputSchema["properties"]["linesOfOutput"]["default"] == 25
     assert "session_id" in read_tool.inputSchema["properties"]
-    assert read_tool.inputSchema["properties"]["session_id"]["anyOf"] == [
-        {"type": "string"},
-        {"type": "null"},
-    ]
+    assert read_tool.inputSchema["required"] == ["session_id"]
+    assert read_tool.inputSchema["properties"]["session_id"]["type"] == "string"
 
 
 @pytest.mark.asyncio
@@ -89,7 +87,7 @@ async def test_server_call_uses_service_and_returns_text_content() -> None:
     server = create_server(TerminalService(terminal))
 
     content, structured = await server.call_tool(
-        "read_terminal_output", {"linesOfOutput": 1}
+        "read_terminal_output", {"linesOfOutput": 1, "session_id": "a"}
     )
 
     assert content[0].text == "output"
@@ -116,7 +114,21 @@ async def test_server_rejects_invalid_line_count() -> None:
     server = create_server(TerminalService(terminal))
 
     with pytest.raises(ToolError, match="greater than zero"):
-        await server.call_tool("read_terminal_output", {"linesOfOutput": 0})
+        await server.call_tool(
+            "read_terminal_output", {"linesOfOutput": 0, "session_id": "a"}
+        )
+
+
+@pytest.mark.asyncio
+async def test_server_requires_session_id_for_terminal_operations() -> None:
+    terminal = FakeTerminal([SessionTarget("a")], ["output"])
+    server = create_server(TerminalService(terminal))
+
+    with pytest.raises(ToolError, match="session_id"):
+        await server.call_tool("write_to_terminal", {"command": "echo hi"})
+
+    with pytest.raises(ToolError, match="session_id"):
+        await server.call_tool("read_terminal_output", {"linesOfOutput": 1})
 
 
 @pytest.mark.asyncio

@@ -34,9 +34,7 @@ def create_server(service: TerminalService | None = None) -> FastMCP:
 
     mcp = FastMCP("iterm-mcp", lifespan=lifespan)
 
-    def validate_session_id(session_id: str | None) -> str | None:
-        if session_id is None:
-            return None
+    def validate_session_id(session_id: object) -> str:
         if not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("session_id must be a non-empty string")
         return session_id.strip()
@@ -63,7 +61,7 @@ def create_server(service: TerminalService | None = None) -> FastMCP:
             raise RuntimeError(str(exc)) from exc
 
     @mcp.tool()
-    async def write_to_terminal(command: str, session_id: str | None = None) -> dict[str, object]:
+    async def write_to_terminal(command: str, session_id: str) -> dict[str, object]:
         """Send text immediately; use for REPLs, interactive SSH, top, exit, and exec.
 
         This tool does not wait for completion or report a command exit code.
@@ -81,7 +79,7 @@ def create_server(service: TerminalService | None = None) -> FastMCP:
 
     @mcp.tool()
     async def execute_command(
-        command: str, session_id: str | None = None, timeout_seconds: float = 120.0
+        command: str, session_id: str, timeout_seconds: float = 120.0
     ) -> dict[str, object]:
         """Run a command expected to return and return its exit code and output.
 
@@ -105,7 +103,7 @@ def create_server(service: TerminalService | None = None) -> FastMCP:
 
     @mcp.tool()
     async def start_command(
-        command: str, session_id: str | None = None, timeout_seconds: float = 120.0
+        command: str, session_id: str, timeout_seconds: float = 120.0
     ) -> dict[str, object]:
         """Start a returning command in the background and return operation_id immediately.
 
@@ -167,8 +165,8 @@ def create_server(service: TerminalService | None = None) -> FastMCP:
 
     @mcp.tool()
     async def read_terminal_output(
+        session_id: str,
         linesOfOutput: int = 25,
-        session_id: str | None = None,
     ) -> str:
         """Read a specific session; pass session_id after any cross-request tab change."""
 
@@ -185,7 +183,7 @@ def create_server(service: TerminalService | None = None) -> FastMCP:
     @mcp.tool()
     async def send_control_character(
         letter: str,
-        session_id: str | None = None,
+        session_id: str,
     ) -> str:
         """Send a control character to an iTerm2 session."""
 

@@ -72,10 +72,10 @@ async def test_execute_pins_one_session_for_before_execute_after_reads() -> None
         buffers=["prompt", "prompt\nresult"],
     )
 
-    result = await TerminalService(terminal).execute("echo result")
+    result = await TerminalService(terminal).execute("echo result", session_id="session-a")
 
     assert result.output_lines == 1
-    assert terminal.resolved == ["session-a"]
+    assert terminal.explicit_resolved == ["session-a"]
     assert terminal.executed == [("session-a", "echo result")]
 
 
@@ -83,7 +83,7 @@ async def test_execute_pins_one_session_for_before_execute_after_reads() -> None
 async def test_write_sends_without_waiting_or_reading() -> None:
     terminal = FakeTerminal([SessionTarget("session-a")], [])
 
-    result = await TerminalService(terminal).write("python")
+    result = await TerminalService(terminal).write("python", session_id="session-a")
 
     assert result.as_dict() == {"session_id": "session-a", "accepted": True}
     assert terminal.executed == [("session-a", "python")]
@@ -96,7 +96,7 @@ async def test_background_operation_has_stable_id_and_session() -> None:
     )
 
     service = TerminalService(terminal)
-    started = await service.start("echo result")
+    started = await service.start("echo result", session_id="session-a")
     completed = await service.wait(started.operation_id)
 
     assert completed.operation_id == started.operation_id
@@ -113,9 +113,12 @@ async def test_concurrent_requests_get_independent_targets() -> None:
     )
     service = TerminalService(terminal)
 
-    await asyncio.gather(service.execute("one"), service.execute("two"))
+    await asyncio.gather(
+        service.execute("one", session_id="a"),
+        service.execute("two", session_id="b"),
+    )
 
-    assert sorted(terminal.resolved) == ["a", "b"]
+    assert sorted(terminal.explicit_resolved) == ["a", "b"]
     assert sorted(target for target, _ in terminal.executed) == ["a", "b"]
 
 
@@ -126,8 +129,8 @@ async def test_read_uses_one_target_and_returns_tail() -> None:
         buffers=["one\ntwo\nthree"],
     )
 
-    assert await TerminalService(terminal).read(2) == "two\nthree"
-    assert terminal.resolved == ["session-a"]
+    assert await TerminalService(terminal).read(2, session_id="session-a") == "two\nthree"
+    assert terminal.explicit_resolved == ["session-a"]
 
 
 @pytest.mark.asyncio
@@ -137,7 +140,7 @@ async def test_send_control_uses_the_resolved_target() -> None:
         buffers=[],
     )
 
-    await TerminalService(terminal).send_control(3)
+    await TerminalService(terminal).send_control(3, session_id="session-a")
 
     assert terminal.controls == [("session-a", 3)]
 
