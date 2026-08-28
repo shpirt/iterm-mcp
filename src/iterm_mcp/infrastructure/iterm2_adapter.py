@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import time
+import uuid
 from contextlib import suppress
 from typing import Any, cast
 
@@ -14,6 +17,7 @@ from iterm2.prompt import PromptMonitor
 from iterm2.transaction import Transaction
 
 from iterm_mcp.domain.models import (
+    ExecutionResult,
     SessionInfo,
     SessionTarget,
     SessionUnavailableError,
@@ -42,6 +46,7 @@ class Iterm2Adapter:
         self._completion_timeout = completion_timeout
         self._rpc_timeout = rpc_timeout
         self._process_tracker = ProcessTracker()
+        self._session_send_locks: dict[str, asyncio.Lock] = {}
 
     async def connect(self) -> None:
         if self._connection is not None and self._app is not None:
@@ -276,51 +281,114 @@ class Iterm2Adapter:
             raise SessionUnavailableError(f"iTerm2 session not found: {target.session_id}")
         return session
 
-    async def _send_text_to_session(self, session: Any, text: str) -> None:
+    async def _send_text_to_session(
+        self, session: Any, text: str, session_id: str | None = None
+    ) -> None:
         try:
-            await asyncio.wait_for(
-                session.async_send_text(text + "\n"), self._rpc_timeout
+            lock = self._session_send_locks.setdefault(
+                str(session_id or getattr(session, "session_id", "default")), asyncio.Lock()
             )
+            async with lock:
+                await asyncio.wait_for(session.async_send_text(text + "\n"), self._rpc_timeout)
         except Exception as exc:
             raise TerminalOperationError(f"Failed to send text: {exc}") from exc
 
     async def send_text(self, target: SessionTarget, text: str) -> None:
-        await self._send_text_to_session(await self._session(target), text)
+        await self._send_text_to_session(await self._session(target), text, target.session_id)
 
-    async def execute_command(self, target: SessionTarget, text: str) -> None:
-        """Subscribe before sending so command-end cannot be missed."""
+    async def execute_command(self, target: SessionTarget, text: str) -> ExecutionResult:
+        """Execute a returning command using Shell Integration or a sentinel fallback."""
 
         session = await self._session(target)
+        started = time.monotonic()
         sent = False
         try:
-            assert self._connection is not None
-            async with PromptMonitor(
-                self._connection,
-                target.session_id,
-                modes=[PromptMonitor.Mode.COMMAND_END],
-            ) as monitor:
-                await self._send_text_to_session(session, text)
-                sent = True
-                await asyncio.wait_for(monitor.async_get(), self._completion_timeout)
-                return
-        except (TimeoutError, AppVersionTooOld):
-            logger.debug("Prompt monitor unavailable; using TTY fallback", exc_info=True)
-        except SessionUnavailableError:
-            raise
+            before = await self.read_line_count(target)
         except TerminalOperationError:
+            before = 0
+        monitor: Any | None = None
+        try:
+            assert self._connection is not None
+            monitor = PromptMonitor(
+                self._connection, target.session_id,
+                modes=[PromptMonitor.Mode.COMMAND_END],
+            )
+            await asyncio.wait_for(monitor.__aenter__(), self._rpc_timeout)  # type: ignore[no-untyped-call]
+            await self._send_text_to_session(session, text, target.session_id)
+            sent = True
+            event = await asyncio.wait_for(
+                monitor.async_get(), self._completion_timeout
+            )
+            exit_code = event[1]
+            output = await self._output_since(target, before)
+            return ExecutionResult(
+                session_id=target.session_id, exit_code=int(exit_code), output=output,
+                output_lines=max(0, len(output.splitlines())),
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+        except AppVersionTooOld:
+            logger.debug("Prompt monitor unavailable; using sentinel", exc_info=True)
+        except TimeoutError:
+            if monitor is not None:
+                output = await self._output_since(target, before)
+                return ExecutionResult(
+                    session_id=target.session_id, output=output, timed_out=True,
+                    output_lines=max(0, len(output.splitlines())),
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+        except (SessionUnavailableError, TerminalOperationError):
             raise
         except Exception:
-            logger.debug("Prompt monitor failed; using TTY fallback", exc_info=True)
+            if sent:
+                return ExecutionResult(
+                    session_id=target.session_id,
+                    timed_out=True,
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+            logger.debug("Prompt monitor failed; using sentinel", exc_info=True)
+        finally:
+            if monitor is not None:
+                with suppress(Exception):
+                    await asyncio.wait_for(monitor.__aexit__(None, None, None), self._rpc_timeout)
 
-        if not sent:
-            await self._send_text_to_session(session, text)
-
-        if target.tty_path is None:
-            raise TerminalOperationError("No TTY is available for completion detection")
-        try:
+        # Compatibility for isolated callers/tests that provide no API connection.
+        # A live adapter always has a connection and uses the sentinel path above.
+        if self._connection is None and target.tty_path:
+            await self._send_text_to_session(session, text, target.session_id)
             await self._process_tracker.wait_until_idle(target.tty_path, self._completion_timeout)
-        except TimeoutError as exc:
-            raise TerminalOperationError(str(exc)) from exc
+            return ExecutionResult(session_id=target.session_id)
+        return await self._execute_with_sentinel(target, text, before, started)
+
+    async def _output_since(self, target: SessionTarget, before: int) -> str:
+        after = await self.read_line_count(target)
+        count = max(1, min(2000, after - before + 5))
+        return await self.read_contents(target, count)
+
+    async def _execute_with_sentinel(
+        self, target: SessionTarget, text: str, before: int, started: float
+    ) -> ExecutionResult:
+        token = f"__ITERM_MCP_EXIT_{uuid.uuid4().hex}__"
+        wrapped = f"{{\n{text}\n}}; __iterm_mcp_rc=$?; printf '\\n{token}%s\\n' \"$__iterm_mcp_rc\""
+        await self._send_text_to_session(await self._session(target), wrapped, target.session_id)
+        pattern = re.compile(re.escape(token) + r"(-?\d+)")
+        deadline = time.monotonic() + self._completion_timeout
+        output = ""
+        while time.monotonic() < deadline:
+            output = await self._output_since(target, before)
+            match = pattern.search(output)
+            if match:
+                output = output[:match.start()].rstrip("\n")
+                return ExecutionResult(
+                    session_id=target.session_id, exit_code=int(match.group(1)), output=output,
+                    output_lines=len(output.splitlines()),
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+            await asyncio.sleep(0.2)
+        return ExecutionResult(
+            session_id=target.session_id, output=output, timed_out=True,
+            output_lines=len(output.splitlines()),
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
 
     async def read_contents(self, target: SessionTarget, lines: int = 25) -> str:
         try:
@@ -385,9 +453,11 @@ class Iterm2Adapter:
     async def send_control(self, target: SessionTarget, code: int) -> None:
         try:
             session = await self._session(target)
-            await asyncio.wait_for(
-                session.async_send_text(chr(code)), self._rpc_timeout
-            )
+            lock = self._session_send_locks.setdefault(target.session_id, asyncio.Lock())
+            async with lock:
+                await asyncio.wait_for(
+                    session.async_send_text(chr(code)), self._rpc_timeout
+                )
         except SessionUnavailableError:
             raise
         except Exception as exc:
@@ -396,5 +466,4 @@ class Iterm2Adapter:
     async def wait_for_completion(self, target: SessionTarget) -> None:
         """Compatibility hook for ports that split send and wait operations."""
 
-        if target.tty_path:
-            await self._process_tracker.wait_until_idle(target.tty_path, self._completion_timeout)
+        return None

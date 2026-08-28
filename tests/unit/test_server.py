@@ -39,6 +39,11 @@ async def test_server_exposes_expected_tools_and_schema() -> None:
         "get_active_session",
         "list_sessions",
         "write_to_terminal",
+        "execute_command",
+        "start_command",
+        "read_command_output",
+        "wait_command",
+        "cancel_command",
         "read_terminal_output",
         "send_control_character",
     }

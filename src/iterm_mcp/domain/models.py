@@ -1,6 +1,7 @@
 """Small, transport-independent models used by the application layer."""
 
 from dataclasses import dataclass
+from typing import Any
 
 from typing_extensions import TypedDict
 
@@ -77,6 +78,68 @@ class SessionInfo:
 
 @dataclass(frozen=True, slots=True)
 class ExecutionResult:
-    """Summary returned after a command has been sent."""
+    """Structured result for a command that was sent and observed."""
 
-    output_lines: int
+    session_id: str = ""
+    exit_code: int | None = None
+    output: str = ""
+    timed_out: bool = False
+    truncated: bool = False
+    duration_ms: int = 0
+    operation_id: str | None = None
+    output_lines: int = 0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "operation_id": self.operation_id,
+            "session_id": self.session_id,
+            "exit_code": self.exit_code,
+            "output": self.output,
+            "timed_out": self.timed_out,
+            "truncated": self.truncated,
+            "duration_ms": self.duration_ms,
+            "output_lines": self.output_lines,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class WriteResult:
+    """Acknowledgement for non-blocking terminal input."""
+
+    session_id: str
+    accepted: bool = True
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"session_id": self.session_id, "accepted": self.accepted}
+
+
+@dataclass(frozen=True, slots=True)
+class OperationSnapshot:
+    """Public state of a background command operation."""
+
+    operation_id: str
+    session_id: str
+    status: str
+    exit_code: int | None = None
+    output: str = ""
+    next_offset: int = 0
+    output_lines: int = 0
+    timed_out: bool = False
+    truncated: bool = False
+    duration_ms: int = 0
+    error: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "operation_id": self.operation_id,
+            "session_id": self.session_id,
+            "status": self.status,
+            "exit_code": self.exit_code,
+            "output": self.output,
+            "next_offset": self.next_offset,
+            "output_lines": self.output_lines,
+            "timed_out": self.timed_out,
+            "truncated": self.truncated,
+            "duration_ms": self.duration_ms,
+            "error": self.error,
+        }

@@ -80,6 +80,32 @@ async def test_execute_pins_one_session_for_before_execute_after_reads() -> None
 
 
 @pytest.mark.asyncio
+async def test_write_sends_without_waiting_or_reading() -> None:
+    terminal = FakeTerminal([SessionTarget("session-a")], [])
+
+    result = await TerminalService(terminal).write("python")
+
+    assert result.as_dict() == {"session_id": "session-a", "accepted": True}
+    assert terminal.executed == [("session-a", "python")]
+
+
+@pytest.mark.asyncio
+async def test_background_operation_has_stable_id_and_session() -> None:
+    terminal = FakeTerminal(
+        [SessionTarget("session-a")], ["prompt", "prompt\nresult"]
+    )
+
+    service = TerminalService(terminal)
+    started = await service.start("echo result")
+    completed = await service.wait(started.operation_id)
+
+    assert completed.operation_id == started.operation_id
+    assert completed.session_id == "session-a"
+    assert completed.status == "completed"
+    assert completed.output_lines == 1
+
+
+@pytest.mark.asyncio
 async def test_concurrent_requests_get_independent_targets() -> None:
     terminal = FakeTerminal(
         targets=[SessionTarget("a"), SessionTarget("b")],

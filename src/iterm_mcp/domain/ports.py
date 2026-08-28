@@ -3,7 +3,7 @@
 from collections.abc import Awaitable
 from typing import Protocol
 
-from .models import SessionInfo, SessionTarget
+from .models import ExecutionResult, SessionInfo, SessionTarget
 
 
 class TerminalPort(Protocol):
@@ -23,7 +23,7 @@ class TerminalPort(Protocol):
 
     async def send_text(self, target: SessionTarget, text: str) -> None: ...
 
-    async def execute_command(self, target: SessionTarget, text: str) -> None: ...
+    async def execute_command(self, target: SessionTarget, text: str) -> ExecutionResult | None: ...
 
     async def read_contents(self, target: SessionTarget, lines: int = 25) -> str: ...
 
